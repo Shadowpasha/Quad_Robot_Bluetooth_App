@@ -2,11 +2,17 @@ import { Tabs } from 'expo-router';
 import React from 'react';
 import { View, TouchableOpacity, Text, PermissionsAndroid, Platform, Modal, Pressable, Alert, FlatList} from 'react-native';
 import styled from 'styled-components';
-import RNBluetoothClassic, { BluetoothDevice } from 'react-native-bluetooth-classic';
-import { useState } from 'react';
+import RNBluetoothClassic, { BluetoothDevice, BluetoothDeviceEvent, BluetoothDeviceReadEvent } from 'react-native-bluetooth-classic';
+import { useState, useEffect, useRef } from 'react';
 import Slider from "react-native-sliders";
 
-const MainView = styled.View`
+// import module
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+
+// import module
+import { ReactNativeJoystick } from "@korsolutions/react-native-joystick";
+
+const MainView = styled(View)`
   width: 100%;
   height: 100%;
   flex:1;
@@ -23,7 +29,7 @@ const Row_View = styled(MainView)`
   justify-content: space-around;
 `;
 
-const ModalView = styled.View`
+const ModalView = styled(View)`
   width: 30%;
   height: 90%;
   background-color: #eceaffc7;
@@ -35,7 +41,7 @@ const ModalView = styled.View`
   margin-left: 150px;
 `;
 
-const ColumnView = styled.View`
+const ColumnView = styled(View)`
   width: 75px;
   height: 100%;
   /* background-color: #9f92ff; */
@@ -63,7 +69,7 @@ const ColumnView_joystick = styled(ColumnView)`
   margin: 12px;
 `;
 
-const Button_main = styled.TouchableOpacity`
+const Button_main = styled(TouchableOpacity)`
   width: 66px;
   height: 66px;
   background-color: #552e7b;
@@ -82,7 +88,13 @@ const Rect_Button_main = styled(Button_main)`
   margin-top: 5px;
 `;
 
-const Text_main = styled.Text`
+const React_button_small = styled(Rect_Button_main)`
+
+  width: 95px;
+  height: 35px;
+`;
+
+const Text_main = styled(Text)`
   color: aliceblue;
   font-size: 40px;
   font-weight: bold;
@@ -104,6 +116,7 @@ const Text_smaller_purple = styled(Text_smaller_main)`
   font-size: 21px;
   color: #552e7b;
   text-align:center;
+  margin:0px;
 `;
 
 const Render_item = styled(Rect_Button_main)`
@@ -140,6 +153,24 @@ async function requestLocationPermission() {
     } else {
       console.log("Location permission for bluetooth scanning denied");
     }
+
+
+    const granted_ble = await PermissionsAndroid.request(
+      PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+      {
+        title: "Bluetooth permission for bluetooth scanning",
+        message:
+          "Grant location permission to allow the app to scan for Bluetooth devices",
+        buttonNeutral: "Ask Me Later",
+        buttonNegative: "Cancel",
+        buttonPositive: "OK",
+      }
+    );
+    if (granted_ble === PermissionsAndroid.RESULTS.GRANTED) {
+      console.log("connection permission for bluetooth scanning granted");
+    } else {
+      console.log("connection permission for bluetooth scanning denied");
+    }
   } catch (err) {
     console.warn(err);
   }
@@ -151,6 +182,7 @@ requestLocationPermission();
 
 
 export default function TabLayout() {
+
   const [modalVisible, setModalVisible] = useState(false);
   const [slider1values, setSlider1values] = useState([0.0]);
   const [slider2values, setSlider2values] = useState([0.0]);
@@ -158,11 +190,13 @@ export default function TabLayout() {
   const [connectedDevices, setConnectedDevices] = useState([]);
   const [connectedDevice, setConnectedDevice] = useState();
   const [connectedStatus, setConnectedStatus] = useState("Disconnected");
+  const connected_ref = useRef(connectedStatus);
+  const device_ref = useRef(connectedDevice);
   const [mode, setMode] = useState("Walk");
   const [step_height, setStep_height] = useState("0.02");
+  const [joystick_values, setjoystick_values] = useState([0.0,0.0]);
   const [imu_pitch, setImu_pitch] = useState("0.01");
   const [imu_roll, setImu_roll] = useState("0.00");
-
 
   
   function onDeviceDisconnected(event: BluetoothDeviceEvent) {
@@ -170,7 +204,7 @@ export default function TabLayout() {
     console.log("Disconnected");
   };
 
-  async function onReceivedData(event: BluetoothReadEvent) {
+  async function onReceivedData(event: BluetoothDeviceReadEvent) {
     // console.log(event);
     // const message = await connectedDevice.read();
     console.log(event.data);
@@ -178,7 +212,7 @@ export default function TabLayout() {
     setImu_pitch(array[0]);
     setImu_roll(array[1]);
     setMode(array[2]);
-    setStep_height(array[3].slice(0,-1));
+    // setStep_height(array[3].slice(0,-1));
   };
 
 
@@ -231,7 +265,7 @@ export default function TabLayout() {
       });
     };
 
-    function ButtonPressed(pressed) {
+    function ButtonPressed(pressed : string) {
       if(connectedStatus === "Connected"){
         connectedDevice.write(pressed+"\n");
       }
@@ -241,15 +275,41 @@ export default function TabLayout() {
       if(connectedStatus === "Connected"){
         if(slideNumber == 1){
           setSlider1values(slide);
-          connectedDevice.write("S1" + (Math.round(slider1values[0] * 10) / 10).toString() + "\n");
+          connectedDevice.write("S1" + (Math.round(slider1values[0] * 10)).toString() + "\n");
         }else{
           setSlider2values(slide);
-          connectedDevice.write("S2" + (Math.round(slider2values[0] * 10) / 10).toString() + "\n");
+          connectedDevice.write("S2" + (Math.round(slider2values[0] * 10)).toString() + "\n");
         }
       }
     }
 
-    
+    const mapNumRange = (num, inMin, inMax, outMin, outMax) =>
+      ((num - inMin) * (outMax - outMin)) / (inMax - inMin) + outMin;
+
+    function Joystick_Send(Value,Joy_Id) {
+      if(connected_ref.current == "Connected"){
+        let x = mapNumRange(Value.position.x, -25.0,125.0, -1.0, 1.0)
+        let y = mapNumRange(Value.position.y, -25.0,125.0, -1.0, 1.0)
+        if(Joy_Id == 1){
+          device_ref.current.write("J1" + String(Math.round((x * 100)) ) + " " + String(Math.round((y * 100)) ) +  "\n");
+        }else{
+          device_ref.current.write("J2" + String(Math.round((x * 100)) ) + " " + String(Math.round((y * 100)) ) +  "\n");
+
+        }
+        
+      }
+
+    }
+
+    useEffect(() => {
+
+      connected_ref.current = connectedStatus;
+      device_ref.current = connectedDevice;
+      // adding event listeners on mount here
+      return () => {
+          // cleaning up the listeners here
+      }
+   }, [connectedStatus, connectedDevice]);
 
 
   return (
@@ -285,8 +345,11 @@ export default function TabLayout() {
         </Modal>
       
       <ColumnView_joystick>
-        <Text_smaller_purple>Step Height: {step_height}mm</Text_smaller_purple>
-            <Row_View>
+            <React_button_small onPressIn={()=>{ButtonPressed("LB")}} onPressOut={()=>{ButtonPressed("S")}}>
+              <Text_smaller_main>L1</Text_smaller_main>
+            </React_button_small>
+            
+            {/* <Row_View>
               <ColumnView>
               <Button_main onPressIn={()=>{ButtonPressed("L1")}} onPressOut={()=>{ButtonPressed("S")}}>
                 <Text_main>◄</Text_main>
@@ -308,7 +371,29 @@ export default function TabLayout() {
                 <Text_main>►</Text_main>
               </Button_main>
               </ColumnView>
-            </Row_View>
+            </Row_View> */}
+
+              <GestureHandlerRootView>
+              <ReactNativeJoystick color="#552e7b" radius={75} onMove={(data) => Joystick_Send(data,1)} onStop={(data) => ButtonPressed("S")} />
+             {/* <JoyStick
+                wrapperColor="#f0f0f0"
+                nippleColor="#d3d3d3"
+                wrapperRadius={70}
+                nippleRadius={20}
+                borderWidth={5}
+                fingerCircleRadius={20}
+                onMove={(data) => {
+                  // Joystick_Send(data)
+                }}
+                onTouchDown={(data) => {
+                  // Joystick_Send(data)
+                }}
+                onTouchUp={(data) => {
+                  // Joystick_Send(data)
+                }}
+              /> */}
+            </GestureHandlerRootView> 
+
         <Text_smaller_purple>Current Mode: {mode}</Text_smaller_purple>
       </ColumnView_joystick>
  
@@ -361,8 +446,13 @@ export default function TabLayout() {
       </ColumnView_wide>
         
       <ColumnView_joystick>
-      <Text_smaller_purple>IMU Pitch: {imu_pitch}º</Text_smaller_purple>
-        <Row_View>
+
+      <React_button_small onPressIn={()=>{ButtonPressed("RB")}} onPressOut={()=>{ButtonPressed("S")}}>
+              <Text_smaller_main>R1</Text_smaller_main>
+            </React_button_small>
+
+     
+        {/* <Row_View>
           <ColumnView>
           <Button_main onPressIn={()=>{ButtonPressed("L2")}} onPressOut={()=>{ButtonPressed("S")}}>
             <Text_main>◄</Text_main>
@@ -384,8 +474,31 @@ export default function TabLayout() {
             <Text_main>►</Text_main>
           </Button_main>
           </ColumnView>
-        </Row_View>
+        </Row_View> */}
+
+            <GestureHandlerRootView>
+            <ReactNativeJoystick color="#552e7b" radius={75} onMove={(data) => Joystick_Send(data,2)}  onStop={(data) => ButtonPressed("S")}/>
+             {/* <JoyStick
+                wrapperColor="#ffffff"
+                nippleColor="#ffffff"
+                wrapperRadius={70}
+                nippleRadius={20}
+                borderWidth={5}
+                fingerCircleRadius={20}
+                onMove={(data) => {
+                  // console.log(data);
+                }}
+                onTouchDown={(data) => {
+                  // console.log(data);
+                }}
+                onTouchUp={(data) => {
+                  // console.log(data);
+                }}
+              /> */}
+            </GestureHandlerRootView> 
+            
       <Text_smaller_purple>IMU Roll: {imu_roll}º</Text_smaller_purple>
+      <Text_smaller_purple>IMU Pitch: {imu_pitch}º</Text_smaller_purple>
       </ColumnView_joystick>
  
      
